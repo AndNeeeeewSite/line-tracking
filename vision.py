@@ -40,8 +40,6 @@ def process_frame(frame):
 #_____
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     cv2.drawContours(frame, contours, -1, (0, 255, 0), 2)
-    cv2.imshow('Real-time Exact Contours', frame)
-    cv2.imshow('Binary Mask (Thresh)', thresh)
 #_____
     position_text = "No line"
     text_color = (255, 255, 255)
