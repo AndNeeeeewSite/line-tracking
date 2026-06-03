@@ -1,2 +1,2 @@
-# line-tracking
+# Line tracking алгоритм від команди "Fovea"
 
