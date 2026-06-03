@@ -58,7 +58,7 @@ def process_frame(frame):
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thresh = cv2.threshold(blurred, 60, 255, cv2.THRESH_BINARY_INV)
+    _, thresh = cv2.threshold(blurred, 220, 255, cv2.THRESH_BINARY_INV)
 
 #_____
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
