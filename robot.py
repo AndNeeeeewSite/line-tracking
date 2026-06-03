@@ -3,7 +3,13 @@ import threading
 
 robot = None
 robot_lock = threading.Lock()
-get_ip = "10.1.66.72".strip()
+
+get_ip_req = 0
+
+if get_ip_req:
+    get_ip = input("Введіть IP-адресу робота: ")
+else:
+    get_ip = "10.1.66.72".strip()
 
 
 def get_stream_url() -> str:
