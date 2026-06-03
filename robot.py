@@ -46,6 +46,18 @@ def send_command(command: str) -> None:
     except Exception as error:
         print(f"Помилка надсилання команди: {error}")
 
+def send_command_async(command: str) -> None:
+    """Надсилання команди в окремому потоці, щоб вікно Tkinter не зависало."""
+
+    # WebSocket може чекати мережеву відповідь, тому команда запускається не в головному потоці.
+    threading.Thread(target=send_command, args=(command,), daemon=True).start()
+
+def set_speed() -> None:
+    """Взяти значення з повзунка і надіслати команду швидкості."""
+
+    # Повзунок повертає число, яке додається до текстової команди speed:<value>.
+    speed = 150
+    send_command_async(f"speed:{speed}")
 
 def close_robot() -> None:
     global robot
@@ -53,3 +65,5 @@ def close_robot() -> None:
         if robot is not None:
             robot.close()
             robot = None
+
+set_speed()
