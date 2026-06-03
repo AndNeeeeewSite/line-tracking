@@ -72,7 +72,7 @@ def process_frame(frame):
     current_time = time.time()
 
     if total_pixels > min_pixel_threshold: #ліня є
-        if center_pixels >= left_pixels and center_pixels >= right_pixels:
+        if center_pixels*0.50 >= left_pixels and center_pixels*0.50 >= right_pixels:
             position_text = "CENTER"
             text_color = (0, 255, 0)
             current_command = "forward"
