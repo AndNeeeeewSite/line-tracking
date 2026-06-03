@@ -32,6 +32,7 @@ movement_state = None
 movement_speed = None
 forward_speed = 170
 turn_speed = 130
+Turn_percentage = 0.5 # вага центру до права та ліва 
 
 
 def process_frame(frame):
@@ -72,9 +73,9 @@ def process_frame(frame):
     current_time = time.time()
 
     if total_pixels > min_pixel_threshold: #ліня є
-        if center_pixels*0.50 >= left_pixels and center_pixels*0.50 >= right_pixels:
+        if center_pixels*Turn_percentage >= left_pixels and center_pixels*Turn_percentage >= right_pixels:
             position_text = "CENTER"
-            text_color = (0, 255, 0)
+            text_color = (255, 0, 0)
             current_command = "forward"
             desired_speed = forward_speed
 
@@ -86,7 +87,7 @@ def process_frame(frame):
 
         elif right_pixels > left_pixels:
             position_text = "RIGHT"
-            text_color = (0, 0, 255)
+            text_color = (255, 0, 0)
             current_command = "right"
             desired_speed = turn_speed
 
@@ -116,7 +117,7 @@ def process_frame(frame):
                 cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
 
     cv2.putText(frame, f"L:{left_pixels} C:{center_pixels} R:{right_pixels}", (20, height - 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
     return frame
 
 def video_loop(video_canvas, root, stream_url) -> None:
