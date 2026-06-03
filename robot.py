@@ -56,7 +56,7 @@ def set_speed() -> None:
     """Взяти значення з повзунка і надіслати команду швидкості."""
 
     # Повзунок повертає число, яке додається до текстової команди speed:<value>.
-    speed = 170
+    speed = 150
     send_command_async(f"speed:{speed}")
 
 def close_robot() -> None:

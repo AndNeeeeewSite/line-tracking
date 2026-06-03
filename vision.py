@@ -28,16 +28,24 @@ def show_frame(frame, video_canvas) -> None:
 import time
 
 last_command_time = 0
+last_frame_time = 0
 command_cooldown = 0.1
 smoothed_line_x = None
 movement_state = None
 movement_speed = None
+pid_integral = 0.0
+pid_last_error = 0.0
 forward_speed = 170
-turn_speed = 100
+turn_speed = 130
+min_speed = 90
+max_speed = 170
+pid_kp = 0.6
+pid_ki = 0.02
+pid_kd = 0.08
 
 
 def process_frame(frame):
-    global last_command_time, smoothed_line_x, movement_state, movement_speed
+    global last_command_time, last_frame_time, smoothed_line_x, movement_state, movement_speed, pid_integral, pid_last_error
     
     height, width = frame.shape[:2]
 
@@ -73,44 +81,60 @@ def process_frame(frame):
             else:
                 smoothed_line_x = int(0.3 * line_center_x + 0.7 * smoothed_line_x)
 
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            cv2.circle(frame, (smoothed_line_x, line_center_y), 5, (0, 0, 255), -1)
+            current_time = time.time()
+            dt = current_time - last_frame_time if last_frame_time else 0.033
+            last_frame_time = current_time
+            error = (smoothed_line_x - screen_center_x) / (width / 2)
+            error = max(min(error, 1.0), -1.0)
+            pid_integral += error * dt
+            derivative = (error - pid_last_error) / dt if dt > 0 else 0.0
+            pid_output = pid_kp * error + pid_ki * pid_integral + pid_kd * derivative
+            pid_last_error = error
+            abs_error = abs(error)
+            desired_speed = int(min_speed + max(0.0, 1.0 - abs_error) * (max_speed - min_speed))
+            if desired_speed < min_speed:
+                desired_speed = min_speed
 
-            if smoothed_line_x < left_boundary:
-                position_text = "LEFT"
-                text_color = (255, 0, 0)
-                current_command = "right"
-            elif smoothed_line_x > right_boundary:
-                position_text = "RIGHT"
-                text_color = (0, 0, 255)
-                current_command = "left"
-            else:
+            if abs(pid_output) < 0.12:
                 position_text = "CENTER"
                 text_color = (0, 255, 0)
                 current_command = "forward"
+            elif pid_output > 0:
+                position_text = "LEFT"
+                text_color = (255, 0, 0)
+                current_command = "left"
+            else:
+                position_text = "RIGHT"
+                text_color = (0, 0, 255)
+                current_command = "right"
 
-            desired_speed = turn_speed if current_command in ("left", "right") else forward_speed
+            speed_changed = desired_speed != movement_speed
+            if speed_changed:
+                send_command_async(f"speed:{desired_speed}")
+                movement_speed = desired_speed
 
-            current_time = time.time()
-            if current_time - last_command_time > command_cooldown:
-                speed_changed = desired_speed != movement_speed
-                if speed_changed:
-                    send_command_async(f"speed:{desired_speed}")
-                    movement_speed = desired_speed
-
-                if current_command != movement_state or speed_changed:
-                    send_command_async(current_command)
-                    movement_state = current_command
-
+            if current_command != movement_state or current_time - last_command_time >= command_cooldown:
+                send_command_async(current_command)
+                movement_state = current_command
                 last_command_time = current_time
 
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.circle(frame, (smoothed_line_x, line_center_y), 5, (0, 0, 255), -1)
             cv2.putText(frame, position_text, (x, y - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, text_color, 2)
         else:
+            current_time = time.time()
+            if current_time - last_command_time >= command_cooldown:
+                send_command_async("stop")
+                last_command_time = current_time
             smoothed_line_x = None
             movement_state = None
             movement_speed = None
     else:
+        current_time = time.time()
+        if current_time - last_command_time >= command_cooldown:
+            send_command_async("stop")
+            last_command_time = current_time
         smoothed_line_x = None
         movement_state = None
         movement_speed = None
