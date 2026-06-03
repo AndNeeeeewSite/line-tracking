@@ -2,6 +2,7 @@ import base64
 import threading
 import tkinter as tk
 import cv2
+import time
 
 from robot import send_command_async
 
@@ -25,27 +26,16 @@ def show_frame(frame, video_canvas) -> None:
     video_canvas.image = image
 
 
-import time
-
 last_command_time = 0
-last_frame_time = 0
 command_cooldown = 0.1
-smoothed_line_x = None
 movement_state = None
 movement_speed = None
-pid_integral = 0.0
-pid_last_error = 0.0
 forward_speed = 170
 turn_speed = 130
-min_speed = 90
-max_speed = 170
-pid_kp = 0.6
-pid_ki = 0.02
-pid_kd = 0.08
 
 
 def process_frame(frame):
-    global last_command_time, last_frame_time, smoothed_line_x, movement_state, movement_speed, pid_integral, pid_last_error
+    global last_command_time, movement_state, movement_speed
     
     height, width = frame.shape[:2]
 
@@ -58,91 +48,75 @@ def process_frame(frame):
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thresh = cv2.threshold(blurred, 220, 255, cv2.THRESH_BINARY_INV)
+    _, thresh = cv2.threshold(blurred, 150, 255, cv2.THRESH_BINARY_INV)#налаштувати маску птм
 
-#_____
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     cv2.drawContours(frame, contours, -1, (0, 255, 0), 2)
-#_____
+
+    left_zone = thresh[0:height, 0:left_boundary]
+    center_zone = thresh[0:height, left_boundary:right_boundary]
+    right_zone = thresh[0:height, right_boundary:width]
+
+    left_pixels = cv2.countNonZero(left_zone) #рахує білу площу
+    center_pixels = cv2.countNonZero(center_zone)
+    right_pixels = cv2.countNonZero(right_zone)
+
+    min_pixel_threshold = 50 
+    total_pixels = left_pixels + center_pixels + right_pixels
+
     position_text = "No line"
     text_color = (255, 255, 255)
+    current_command = "stop"
+    desired_speed = movement_speed
 
-    if contours:
-        largest_contour = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(largest_contour) > 600:
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            line_center_x = x + (w // 2)
-            line_center_y = y + (h // 2)
+    current_time = time.time()
 
-            if smoothed_line_x is None:
-                smoothed_line_x = line_center_x
-            else:
-                smoothed_line_x = int(0.3 * line_center_x + 0.7 * smoothed_line_x)
+    if total_pixels > min_pixel_threshold: #ліня є
+        if center_pixels >= left_pixels and center_pixels >= right_pixels:
+            position_text = "CENTER"
+            text_color = (0, 255, 0)
+            current_command = "forward"
+            desired_speed = forward_speed
 
-            current_time = time.time()
-            dt = current_time - last_frame_time if last_frame_time else 0.033
-            last_frame_time = current_time
-            error = (smoothed_line_x - screen_center_x) / (width / 2)
-            error = max(min(error, 1.0), -1.0)
-            pid_integral += error * dt
-            derivative = (error - pid_last_error) / dt if dt > 0 else 0.0
-            pid_output = pid_kp * error + pid_ki * pid_integral + pid_kd * derivative
-            pid_last_error = error
-            abs_error = abs(error)
-            desired_speed = int(min_speed + max(0.0, 1.0 - abs_error) * (max_speed - min_speed))
-            if desired_speed < min_speed:
-                desired_speed = min_speed
+        elif left_pixels > right_pixels:
+            position_text = "LEFT"
+            text_color = (255, 0, 0)
+            current_command = "left"
+            desired_speed = turn_speed
 
-            if abs(pid_output) < 0.12:
-                position_text = "CENTER"
-                text_color = (0, 255, 0)
-                current_command = "forward"
-            elif pid_output > 0:
-                position_text = "LEFT"
-                text_color = (255, 0, 0)
-                current_command = "left"
-            else:
-                position_text = "RIGHT"
-                text_color = (0, 0, 255)
-                current_command = "right"
+        elif right_pixels > left_pixels:
+            position_text = "RIGHT"
+            text_color = (0, 0, 255)
+            current_command = "right"
+            desired_speed = turn_speed
 
-            speed_changed = desired_speed != movement_speed
-            if speed_changed:
-                send_command_async(f"speed:{desired_speed}")
-                movement_speed = desired_speed
+        speed_changed = desired_speed != movement_speed
+        if speed_changed:
+            send_command_async(f"speed:{desired_speed}")
+            movement_speed = desired_speed
 
-            if current_command != movement_state or current_time - last_command_time >= command_cooldown:
-                send_command_async(current_command)
-                movement_state = current_command
-                last_command_time = current_time
-
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            cv2.circle(frame, (smoothed_line_x, line_center_y), 5, (0, 0, 255), -1)
-            cv2.putText(frame, position_text, (x, y - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, text_color, 2)
-        else:
-            current_time = time.time()
-            if current_time - last_command_time >= command_cooldown:
-                send_command_async("stop")
-                last_command_time = current_time
-            smoothed_line_x = None
-            movement_state = None
-            movement_speed = None
+        if current_command != movement_state or current_time - last_command_time >= command_cooldown:
+            send_command_async(current_command)
+            movement_state = current_command
+            last_command_time = current_time
+        
     else:
+        position_text = "No line"
         current_time = time.time()
         if current_time - last_command_time >= command_cooldown:
             send_command_async("stop")
             last_command_time = current_time
-        smoothed_line_x = None
         movement_state = None
         movement_speed = None
 
-    # Рисуем границы зон
+    # Рисуем границы зон <-- фу москальська жах
     cv2.line(frame, (left_boundary, 0), (left_boundary, height), (255, 255, 0), 1)
     cv2.line(frame, (right_boundary, 0), (right_boundary, height), (255, 255, 0), 1)
     cv2.putText(frame, f"Status: {position_text}", (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
 
+    cv2.putText(frame, f"L:{left_pixels} C:{center_pixels} R:{right_pixels}", (20, height - 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
     return frame
 
 def video_loop(video_canvas, root, stream_url) -> None:
