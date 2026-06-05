@@ -1,7 +1,8 @@
 import os
 import cv2
-import tkinter as tk
 import vision
+
+vision.send_command_async = lambda cmd: print(f"Отримано команду: {cmd}")
 
 
 def test_on_images():
@@ -24,7 +25,9 @@ def test_on_images():
             print(f"Не вдалося завантажити {file_name}")
             continue
 
-        cv2.imshow("Test Vision Algorithm", frame)
+        frame = cv2.resize(frame, (640, 480))
+        result_frame = vision.process_frame(frame)
+        cv2.imshow("Test Vision Algorithm", result_frame)
         
         key = cv2.waitKey(0) & 0xFF
         if key == ord('q'):
