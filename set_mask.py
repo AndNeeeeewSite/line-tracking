@@ -1,22 +1,28 @@
 import cv2
-cam_num = 1 
+from robot import connect_robot, close_robot, get_stream_url
 
 def nothing(x):
     pass
 
-video = cv2.VideoCapture(cam_num)
+connect_robot()
+stream_url = get_stream_url()
+
+video = cv2.VideoCapture(stream_url)
 if not video.isOpened():
-    print(f"Не вдалося відкрити джерело відео [{cam_num}]")
+    print(f"Не вдалося відкрити джерело відео")
+    close_robot()
     exit()
 
-window_name = "тет маски"
+window_name = "test"
+mask_window = "binary"
+
 cv2.namedWindow(window_name)
+cv2.namedWindow(mask_window)
 
 cv2.createTrackbar("Threshold", window_name, 150, 255, nothing)
 cv2.createTrackbar("Blur (Odd)", window_name, 5, 21, nothing)
 
-print("--- тест маски ---")
-print("'q' для виходу")
+print("test mask")
 
 while True:
     ok, frame = video.read()
@@ -45,10 +51,13 @@ while True:
                 (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
 
     cv2.imshow(window_name, frame)
+    cv2.imshow(mask_window, thresh)
 
     key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):
+    if key == ord('q') or key == 27:
         break
+
 video.release()
 cv2.destroyAllWindows()
+close_robot()
 print("Тест маски завершено.")
