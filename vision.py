@@ -4,6 +4,7 @@ import tkinter as tk
 import cv2
 import time
 import math
+from collections import deque
 import numpy as np
 
 from robot import send_command_async
@@ -29,13 +30,14 @@ def show_frame(frame, video_canvas) -> None:
 
 
 last_command_time = 0
-command_cooldown = 0.1
+command_cooldown = 0.2
 movement_state = None
 movement_speed = None
-forward_speed = 150
-turn_speed = 150
+forward_speed = 120
+turn_speed = 120
 line_roi_top = 0.45
 line_min_pixels = 600
+error_history = deque(maxlen=6)
 
 
 def process_frame(frame):
@@ -81,8 +83,7 @@ def process_frame(frame):
     command = "stop"
     desired_speed = movement_speed
 
-    if line_points:
-        xs = np.array([p[0] for p in line_points], dtype=np.float32)
+xs = np.array([p[0] for p in line_points], dtype=np.float32)
         ys = np.array([p[1] for p in line_points], dtype=np.float32)
         weights = np.linspace(1.0, 2.0, len(xs))
         target_x = int(np.average(xs, weights=weights))
@@ -93,23 +94,39 @@ def process_frame(frame):
             curve = 0
 
         error_x = target_x - width // 2
+        error_history.append(error_x)
+        smoothed_error = int(np.mean(error_history)) if error_history else error_x
+
         angle = 0.0
         if len(xs) > 1:
             slope = np.polyfit(ys, xs, 1)[0]
             angle = math.degrees(math.atan(slope))
 
-        if abs(error_x) < width * 0.08 and abs(curve) < width * 0.05:
+        center_threshold = width * 0.08
+        strong_turn_threshold = width * 0.18
+        curve_threshold = width * 0.06
+
+        if abs(smoothed_error) < center_threshold and abs(curve) < curve_threshold:
             status = "FORWARD"
             command = "forward"
             desired_speed = forward_speed
-        elif error_x < 0 or curve < 0:
-            status = "LEFT"
-            command = "left"
-            desired_speed = turn_speed
         else:
-            status = "RIGHT"
-            command = "right"
-            desired_speed = turn_speed
+            if abs(smoothed_error) > strong_turn_threshold:
+                command = "left" if smoothed_error < 0 else "right"
+            elif len(line_points) >= 3:
+                command = "left" if smoothed_error < 0 else "right"
+            else:
+                command = movement_state or "forward"
+
+            if command == "left":
+                status = "LEFT"
+                desired_speed = turn_speed
+            elif command == "right":
+                status = "RIGHT"
+                desired_speed = turn_speed
+            else:
+                status = "FORWARD"
+                desired_speed = forward_speed
 
         for px, py in line_points:
             cv2.circle(frame, (px, py), 6, (0, 255, 255), -1)
