@@ -30,7 +30,13 @@ last_command_time = 0
 command_cooldown = 0.1
 movement_state = None
 movement_speed = None
+<<<<<<< Updated upstream
 forward_speed = 170
+=======
+pid_integral = 0.0
+pid_last_error = 0.0
+forward_speed = 150
+>>>>>>> Stashed changes
 turn_speed = 130
 Turn_percentage = 0.5 # вага центру до права та ліва 
 
@@ -49,7 +55,11 @@ def process_frame(frame):
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+<<<<<<< Updated upstream
     _, thresh = cv2.threshold(blurred, 150, 255, cv2.THRESH_BINARY_INV)#налаштувати маску птм
+=======
+    _, thresh = cv2.threshold(blurred, 40, 100, cv2.THRESH_BINARY_INV)
+>>>>>>> Stashed changes
 
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     cv2.drawContours(frame, contours, -1, (0, 255, 0), 2)
