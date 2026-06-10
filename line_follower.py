@@ -1,86 +1,131 @@
+# line_follower.py
+import threading
+import queue
 import cv2
-import numpy as np
 import argparse
 from robot_client import Esp32RobotClient
 import time
 from config import DEFAULT_IP, BASE_SPEED, MIN_SPEED, MAX_SPEED, KP, DEAD_ZONE, LOOP_DELAY
 
+MAX_LOOP_DELAY = 0.03
+
+def video_capture_thread(url, frame_queue, stop_event):
+    cap = cv2.VideoCapture(url)
+    if not cap.isOpened():
+        return
+    while not stop_event.is_set():
+        ret, frame = cap.read()
+        if not ret:
+            time.sleep(0.005)
+            continue
+        if frame_queue.full():
+            try:
+                frame_queue.get_nowait()
+            except queue.Empty:
+                pass
+        frame_queue.put(frame)
+    cap.release()
 
 def process_frame_and_get_error(frame):
     if frame is None:
         return 0.0, frame
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thresh = cv2.threshold(blurred, 80, 255, cv2.THRESH_BINARY_INV)
-    height, width = thresh.shape
-    roi = thresh[int(height * 0.6):height, 0:width]
-    M = cv2.moments(roi)
+        
+    height, width = frame.shape[:2]
+    roi = frame[int(height * 0.6):height, 0:width]
+    
+    # Сжатие картинки в 2 раза для ускорения OpenCV на 400%
+    roi_small = cv2.resize(roi, (int(width/2), int((height*0.4)/2)), interpolation=cv2.INTER_NEAREST)
+    
+    gray = cv2.cvtColor(roi_small, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY_INV)
+    
+    M = cv2.moments(thresh)
     if M["m00"] > 0:
-        cx = int(M["m10"] / M["m00"])
+        cx_small = int(M["m10"] / M["m00"])
+        cx = cx_small * 2  
+        
         center_screen = width / 2
         error = cx - center_screen
         normalized_error = (error / center_screen) * 100
+        
         cv2.circle(frame, (cx, int(height * 0.8)), 5, (0, 0, 255), -1)
         cv2.line(frame, (int(center_screen), int(height * 0.6)), (cx, int(height * 0.8)), (0, 255, 0), 2)
         return normalized_error, frame
-
+        
     return 0.0, frame
 
 def main():
-    parser = argparse.ArgumentParser(description="KPI Robot Vision Car - Line Follower")
-    parser.add_argument("-i", "--ip", type=str, default=DEFAULT_IP, help="IP-адрес ESP32-CAM")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--ip", type=str, default=DEFAULT_IP)
     args = parser.parse_args()
+    
     robot = Esp32RobotClient(ip=args.ip)
     if not robot.connect():
-        print("Не подключено к роботу.")
         return
+
     stream_url = f"http://{args.ip}:81/stream"
-    print(f"Видео: {stream_url}")
-    cap = cv2.VideoCapture(stream_url)
-    if not cap.isOpened():
-        print("Поток камеры не открыт.")
-        robot.disconnect()
-        return
-    print("\nСтарт. Следование по линии.")
-    print("Ctrl+C для остановки.")
+    frame_queue = queue.Queue(maxsize=2)
+    stop_event = threading.Event()
+    
+    reader_thread = threading.Thread(
+        target=video_capture_thread, 
+        args=(stream_url, frame_queue, stop_event), 
+        daemon=True
+    )
+    reader_thread.start()
+    
+    loop_delay = min(LOOP_DELAY, MAX_LOOP_DELAY)
+    fps_counter = 0
+    fps_timer = time.time()
+    current_fps = 0
+    
     try:
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("Пропуск кадра...")
+            try:
+                frame = frame_queue.get(timeout=0.02)
+            except queue.Empty:
                 continue
-            raw_frame = frame.copy()
+            
+            current_time = time.time()
+            fps_counter += 1
+            if current_time - fps_timer >= 1.0:
+                current_fps = fps_counter
+                fps_counter = 0
+                fps_timer = current_time
+            
             error, processed = process_frame_and_get_error(frame)
-            cv2.imshow("Raw camera", raw_frame)
             cv2.imshow("Processed camera", processed)
+            
             adjustment = abs(error) * KP
+            
             if abs(error) > DEAD_ZONE:
                 target_speed = int(BASE_SPEED + adjustment)
                 target_speed = max(MIN_SPEED, min(target_speed, MAX_SPEED))
-                robot.set_speed(target_speed)
                 if error > 0:
-                    robot.move_right()
+                    robot.move_right(target_speed)
                     direction_label = "RIGHT"
                 else:
-                    robot.move_left()
+                    robot.move_left(target_speed)
                     direction_label = "LEFT "
             else:
-                robot.set_speed(BASE_SPEED)
-                robot.move_forward()
+                robot.move_forward(BASE_SPEED)
                 direction_label = "FORWARD"
-            print(f"Error: {error:6.2f} | Action: {direction_label} | Speed: {robot.current_speed}", end="\r")
+            
+            print(f"FPS: {current_fps} | Error: {error:6.2f} | Action: {direction_label} | Speed: {robot.current_speed}      ", end="\r")
+            
             if cv2.waitKey(1) & 0xFF == 27:
                 break
-            time.sleep(LOOP_DELAY)
+            
+            if loop_delay > 0:
+                time.sleep(loop_delay)
     except KeyboardInterrupt:
-        print("\nОстановка...")
+        pass
     finally:
+        stop_event.set()
+        reader_thread.join(timeout=1)
         robot.stop()
         robot.disconnect()
-        cap.release()
         cv2.destroyAllWindows()
-        print("Завершено.")
 
 if __name__ == "__main__":
     main()
