@@ -5,25 +5,27 @@ import cv2
 import argparse
 from robot_client import Esp32RobotClient
 import time
-from config import DEFAULT_IP, BASE_SPEED, MIN_SPEED, MAX_SPEED, KP, DEAD_ZONE, LOOP_DELAY
+from config import DEFAULT_IP, BASE_SPEED, MIN_SPEED, MAX_SPEED, TURN_SPEED, KP, DEAD_ZONE, LOOP_DELAY
 
 MAX_LOOP_DELAY = 0.03
 
-# === НАСТРОЙКИ ПОВЫШЕННОЙ ОТЗЫВЧИВОСТИ ===
+# === НАСТРОЙКИ ПОВЫШЕННОЙ ОТЗЫВЧИВОСТИ И БОЛЬШОГО ЗАПАСА РЕКАВЕРИ ===
 
-# Настройки поиска линии (сжаты для быстрой реакции)
-NO_LINE_KEEP_SEARCH = 6    # Было 15. Меньше ищем по сторонам, если потеряли линию на высокой скорости
-NO_LINE_BACKUP = 25        # Было 45. Быстрее начинаем сдавать назад, если спиральный поиск не помог
-NO_LINE_RECOVER_SPEED = 140 # Чуть быстрее откатываемся, чтобы выйти на траекторию
+# Настройки поиска линии
+NO_LINE_KEEP_SEARCH = 5    # Быстрый скана по сторонам на месте
+# !!! БОЛЬШОЙ ЗАПАС КАДРОВ ДЛЯ УВЕРЕННОГО ОТКАТА НАЗАД !!!
+NO_LINE_BACKUP = 45        # Было 25. Даем роботу гораздо больше времени катиться назад в поисках линии
+NO_LINE_RECOVER_SPEED = MAX_SPEED 
 
-# Настройки детекции буксования (реагирует в 2 раза быстрее)
-SLIP_THRESHOLD = 0.6       # Было 0.4. Повысили чувствительность к «застыванию» ошибки
-SLIP_FRAME_COUNT = 4       # Было 10. Ждем всего 4 кадра жесткого затупа вместо 10
-BACKOFF_DURATION = 0.18    # Было 0.25. Меньше блокируем поток, делаем короткий импульсный толчок назад
+# Настройки детекции буксования
+SLIP_THRESHOLD = 0.6       
+SLIP_FRAME_COUNT = 4       
+# !!! УВЕЛИЧЕННЫЙ ВРЕМЕННОЙ ЗАПАС ИМПУЛЬСА ОТКАТА !!!
+BACKOFF_DURATION = 0.45    # Было 0.22. Робот дольше и глубже отскакивает назад на MAX_SPEED при буксе
 
 # Настройки динамического ускорения на прямых
-STRAIGHT_ACCEL_STEP = 4    # Было 3. Быстрее набираем скорость на прямых
-STRAIGHT_THRESHOLD = 6.0   # Было 8.0. Жестче оцениваем «прямизну» дороги
+STRAIGHT_ACCEL_STEP = 4    
+STRAIGHT_THRESHOLD = 6.0   
 
 def video_capture_thread(url, frame_queue, stop_event):
     cap = cv2.VideoCapture(url)
@@ -107,6 +109,8 @@ def main():
     if not robot.connect():
         return
 
+    robot.send_command_async("led:on")
+
     stream_url = f"http://{args.ip}:81/stream"
     frame_queue = queue.Queue(maxsize=2)
     stop_event = threading.Event()
@@ -162,7 +166,6 @@ def main():
             if robot_active:
                 # --- ОБРАБОТКА АКТИВНОГО НЕБЛОКИРУЮЩЕГО ОТКАТА ---
                 if current_time < recovery_until_time:
-                    # Робот всё еще находится в фазе «отскока» назад, пропускаем регулятор траектории
                     direction_label = "SLIP-REVERSE"
                     printed_error = error if line_found else float('nan')
                     print(f"FPS: {current_fps} | Error: {printed_error:6.2f} | Action: {direction_label}      ", end="\r")
@@ -178,17 +181,14 @@ def main():
                     abs_error = abs(error)
                     
                     # --- УЛЬТРА-ДЕТЕКЦИЯ БУКСОВАНИЯ ---
-                    # Если есть ошибка руления, но она не меняется — мы уперлись или забуксовали
                     if abs_error > DEAD_ZONE and abs(error - prev_error) < SLIP_THRESHOLD:
                         stuck_frames_counter += 1
                         if stuck_frames_counter >= SLIP_FRAME_COUNT:
-                            print("\n[!] БУКС! Быстрый откат назад...")
-                            target_speed = int(BASE_SPEED * 1.2) # Чуть сильнее импульс
-                            robot.move_backward(target_speed)
+                            print("\n[!] БУКС! Глубокий откат назад со стратегическим запасом...")
                             
-                            # Взводим таймер отката вместо глухого time.sleep()
+                            robot.move_backward(MAX_SPEED) 
+                            
                             recovery_until_time = time.time() + BACKOFF_DURATION
-                            
                             stuck_frames_counter = 0
                             current_cruise_speed = BASE_SPEED 
                             prev_error = error
@@ -217,22 +217,23 @@ def main():
                             target_speed = max(MIN_SPEED, min(target_speed, MAX_SPEED))
                             
                             if error > 0:
+                                target_speed = TURN_SPEED
                                 robot.move_right(target_speed)
                                 direction_label = f"RIGHT ({target_speed})"
                             else:
+                                target_speed = TURN_SPEED
                                 robot.move_left(target_speed)
                                 direction_label = f"LEFT  ({target_speed})"
                     
                     last_error = error
                 else:
-                    # Линия утеряна — Ускоренные фазы восстановления
+                    # Линия утеряна — Увеличенные фазы восстановления
                     lost_frames += 1
                     stuck_frames_counter = 0
                     current_cruise_speed = BASE_SPEED
                     
                     if lost_frames <= NO_LINE_KEEP_SEARCH:
-                        # Спиральный / агрессивный поиск на месте
-                        target_speed = int(MAX_SPEED - (lost_frames * 6)) # Более крутое падение скорости поворота
+                        target_speed = int(MAX_SPEED - (lost_frames * 6))
                         target_speed = max(MIN_SPEED, target_speed)
                         if last_error > 0:
                             robot.move_right(target_speed)
@@ -241,10 +242,9 @@ def main():
                             robot.move_left(target_speed)
                             direction_label = "SCAN-LEFT"
                     elif lost_frames <= NO_LINE_BACKUP:
-                        # Резкий откат назад для возврата линии в ROI
-                        target_speed = NO_LINE_RECOVER_SPEED
-                        robot.move_backward(target_speed)
-                        direction_label = "RECOVER-BACK"
+                        # Продолжительный и глубокий откат назад на MAX_SPEED
+                        robot.move_backward(NO_LINE_RECOVER_SPEED)
+                        direction_label = f"RECOVER-BACK ({lost_frames}/{NO_LINE_BACKUP})"
                     else:
                         target_speed = 0
                         robot.stop()
