@@ -3,7 +3,7 @@ import threading
 import queue
 import time
 from websocket import create_connection
-from config import DEFAULT_IP
+from config import DEFAULT_IP, COMMAND_REPEAT_INTERVAL
 
 class Esp32RobotClient:
     def __init__(self, ip: str = DEFAULT_IP):
@@ -18,6 +18,8 @@ class Esp32RobotClient:
         
         self.current_speed = None
         self.last_move_command = None
+        self.current_move_command = None
+        self.last_move_command_time = 0.0
 
     def connect(self) -> bool:
         with self.lock:
@@ -44,6 +46,19 @@ class Esp32RobotClient:
             try:
                 command = self.cmd_queue.get(timeout=0.05)
             except queue.Empty:
+                command = None
+
+            now = time.time()
+            if command is None:
+                with self.lock:
+                    if self.robot is not None and self.current_move_command is not None:
+                        if now - self.last_move_command_time >= COMMAND_REPEAT_INTERVAL:
+                            try:
+                                self.robot.send(self.current_move_command)
+                                _ = self.robot.recv()
+                                self.last_move_command_time = now
+                            except:
+                                pass
                 continue
                 
             with self.lock:
@@ -51,6 +66,11 @@ class Esp32RobotClient:
                     try:
                         self.robot.send(command)
                         _ = self.robot.recv()
+                        if command in ("forward", "left", "right"):
+                            self.current_move_command = command
+                            self.last_move_command_time = now
+                        elif command == "stop":
+                            self.current_move_command = None
                     except:
                         pass
             self.cmd_queue.task_done()
