@@ -9,6 +9,15 @@ from config import DEFAULT_IP, BASE_SPEED, MIN_SPEED, MAX_SPEED, KP, DEAD_ZONE, 
 
 MAX_LOOP_DELAY = 0.03
 
+actions = []
+
+def history(i):
+    if len(actions)>=10:
+        actions.pop(0)
+        actions.append(i)
+    else:
+        actions.append(i)
+
 def video_capture_thread(url, frame_queue, stop_event):
     cap = cv2.VideoCapture(url)
     if not cap.isOpened():
@@ -53,6 +62,8 @@ def process_frame_and_get_error(frame):
         return normalized_error, frame
         
     return 0.0, frame
+
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -104,12 +115,16 @@ def main():
                 if error > 0:
                     robot.move_right(target_speed)
                     direction_label = "RIGHT"
+                    history(move_left())
+
                 else:
                     robot.move_left(target_speed)
                     direction_label = "LEFT "
+                    history(move_right())
             else:
                 robot.move_forward(BASE_SPEED)
                 direction_label = "FORWARD"
+                history(move_backward())
             
             print(f"FPS: {current_fps} | Error: {error:6.2f} | Action: {direction_label} | Speed: {robot.current_speed}      ", end="\r")
             
