@@ -66,7 +66,7 @@ class Esp32RobotClient:
                     try:
                         self.robot.send(command)
                         _ = self.robot.recv()
-                        if command in ("forward", "left", "right"):
+                        if command in ("forward", "left", "right", "backward"):
                             self.current_move_command = command
                             self.last_move_command_time = now
                         elif command == "stop":
@@ -101,6 +101,12 @@ class Esp32RobotClient:
         if self.last_move_command != "right":
             self.last_move_command = "right"
             self.send_command_async("right")
+
+    def move_backward(self, speed: int):
+        self.set_speed(speed)
+        if self.last_move_command != "backward":
+            self.last_move_command = "backward"
+            self.send_command_async("backward")
 
     def stop(self):
         self.last_move_command = "stop"
